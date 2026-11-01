@@ -1,0 +1,19 @@
+services:
+  cart-mongodb:
+    image: mongo:8.0
+    container_name: cart-mongodb
+    restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27018:27017"
+    volumes:
+      - cart_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  cart_mongo_data:
