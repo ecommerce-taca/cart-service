@@ -10,13 +10,12 @@
 .classpath
 .project
 
-# Local configuration and secrets
+# Environment and secrets
 .env
 .env.*
 !.env.example
-application-local.yml
-application-prod.yml
+application-*.secrets.yml
 
-# Operating system
+# OS
 .DS_Store
 Thumbs.db

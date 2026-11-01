@@ -1,0 +1,3 @@
+spring:
+  mongodb:
+    uri: ${MONGODB_URI}
