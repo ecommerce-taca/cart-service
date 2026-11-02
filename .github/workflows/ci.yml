@@ -1,0 +1,71 @@
+name: CI
+
+# Trigger: mọi PR + push lên main/develop đều chạy test & build.
+# Push image: main → latest + <sha>; develop → develop + develop-<sha>.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Test · Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Java 25 khớp <java.version> trong pom.xml và image eclipse-temurin:25
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+
+      # Runner ubuntu-latest có sẵn Docker nên Testcontainers chạy được
+      - run: mvn -B -ntp verify
+
+  docker:
+    name: Build & Push Docker image
+    needs: test
+    # Push image chỉ khi push lên main (latest + sha) hoặc develop (develop + develop-sha).
+    # PR không push để tránh image tràn Docker Hub.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Đăng nhập Docker Hub bằng secret (không hardcode credential)
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # main → latest + <sha>; develop → develop + develop-<sha> (để rollback được theo SHA)
+      - name: Compute image tags
+        id: tags
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/cart-service
+        run: |
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            printf 'list<<EOF\n%s:latest\n%s:%s\nEOF\n' "$IMAGE" "$IMAGE" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
+            printf 'list<<EOF\n%s:develop\n%s:develop-%s\nEOF\n' "$IMAGE" "$IMAGE" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
