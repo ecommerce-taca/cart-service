@@ -1,3 +1,7 @@
 spring:
   mongodb:
     uri: ${MONGODB_URI}
+
+cart:
+  indexes:
+    initialize: true
