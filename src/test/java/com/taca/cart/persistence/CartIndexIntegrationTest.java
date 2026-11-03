@@ -32,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class CartIndexIntegrationTest {
     @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:8.0")
+    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0")
             .withReplicaSet();
 
     @DynamicPropertySource

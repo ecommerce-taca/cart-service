@@ -43,7 +43,7 @@ class CartMutationPersistenceIntegrationTest {
     private static final String BUYER = "buyer-001";
 
     @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:8.0")
+    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0")
             .withReplicaSet();
 
     @DynamicPropertySource

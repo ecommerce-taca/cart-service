@@ -36,7 +36,7 @@ class CartCasIntegrationTest {
     private static final Instant NOW = Instant.parse("2026-11-02T00:00:00Z");
 
     @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:8.0")
+    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0")
             .withReplicaSet();
 
     @DynamicPropertySource

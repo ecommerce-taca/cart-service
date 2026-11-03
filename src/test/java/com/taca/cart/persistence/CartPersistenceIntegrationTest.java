@@ -35,7 +35,7 @@ class CartPersistenceIntegrationTest {
     private static final String CART_ID = "019a0011-2222-7333-8444-555566667777";
 
     @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:8.0")
+    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0")
             .withReplicaSet();
 
     @DynamicPropertySource

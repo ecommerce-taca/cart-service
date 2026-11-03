@@ -28,7 +28,7 @@ class MongoTransactionIntegrationTest {
     private static final String KEYS = "phase1f_idempotency_keys";
 
     @Container
-    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:8.0")
+    static final MongoDBContainer MONGO = new MongoDBContainer("mongo:7.0")
             .withReplicaSet();
 
     @DynamicPropertySource
