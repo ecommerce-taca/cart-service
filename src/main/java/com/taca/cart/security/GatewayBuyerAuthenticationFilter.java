@@ -46,7 +46,8 @@ public class GatewayBuyerAuthenticationFilter extends OncePerRequestFilter {
         String buyerUserId = singleHeader(request, USER_ID_HEADER);
 
         if (!isTrustedToken(token) || !isValidBuyerId(buyerUserId)) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            SecurityContextHolder.clearContext();
+            SecurityErrorWriter.unauthorized(request, response);
             return;
         }
 

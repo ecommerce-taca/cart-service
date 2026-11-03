@@ -41,7 +41,7 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
 
         if (!isTrustedToken(token)) {
             SecurityContextHolder.clearContext();
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            SecurityErrorWriter.unauthorized(request, response);
             return;
         }
 

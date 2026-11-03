@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 public enum CartErrorCode {
     CART_INVALID_INPUT(HttpStatus.BAD_REQUEST),
     CART_UNAUTHENTICATED(HttpStatus.UNAUTHORIZED),
+    CART_FORBIDDEN(HttpStatus.FORBIDDEN),
     CART_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND),
     CART_PRODUCT_UNAVAILABLE(HttpStatus.CONFLICT),
     CART_TOO_MANY_ITEMS(HttpStatus.CONFLICT),
