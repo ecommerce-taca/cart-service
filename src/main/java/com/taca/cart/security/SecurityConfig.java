@@ -21,26 +21,40 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            @Value("${CART_GATEWAY_TOKEN:}") String gatewayToken) throws Exception {
+            @Value("${CART_GATEWAY_TOKEN:}") String gatewayToken,
+            @Value("${CART_INTERNAL_TOKEN:}") String internalToken) throws Exception {
+
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
                 .requestCache(AbstractHttpConfigurer::disable)
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(
                         new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
-                .addFilterBefore(new GatewayBuyerAuthenticationFilter(gatewayToken),
+                .addFilterBefore(
+                        new GatewayBuyerAuthenticationFilter(gatewayToken),
+                        UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(
+                        new InternalServiceAuthenticationFilter(internalToken),
                         UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/health/live", "/health/ready").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/cart").hasAuthority(CartAuthorities.BUYER)
-                        .requestMatchers(HttpMethod.POST, "/api/v1/cart/items").hasAuthority(CartAuthorities.BUYER)
-                        .requestMatchers(HttpMethod.PUT, "/api/v1/cart/items/{itemId}").hasAuthority(CartAuthorities.BUYER)
-                        .requestMatchers(HttpMethod.DELETE, "/api/v1/cart/items/{itemId}").hasAuthority(CartAuthorities.BUYER)
-                        .requestMatchers(HttpMethod.GET, "/api/v1/internal/carts/{buyerUserId}").hasAuthority(CartAuthorities.INTERNAL)
-                        .requestMatchers(HttpMethod.POST, "/api/v1/internal/carts/{buyerUserId}/checked-out").hasAuthority(CartAuthorities.INTERNAL)
+                        .requestMatchers(HttpMethod.GET,
+                                "/health/live", "/health/ready").permitAll()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/v1/cart").hasAuthority(CartAuthorities.BUYER)
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/v1/cart/items").hasAuthority(CartAuthorities.BUYER)
+                        .requestMatchers(HttpMethod.PUT,
+                                "/api/v1/cart/items/{itemId}").hasAuthority(CartAuthorities.BUYER)
+                        .requestMatchers(HttpMethod.DELETE,
+                                "/api/v1/cart/items/{itemId}").hasAuthority(CartAuthorities.BUYER)
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/v1/internal/carts/{buyerUserId}").hasAuthority(CartAuthorities.INTERNAL)
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/v1/internal/carts/{buyerUserId}/checked-out").hasAuthority(CartAuthorities.INTERNAL)
                         .anyRequest().denyAll()
                 );
 
