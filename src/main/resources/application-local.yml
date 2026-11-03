@@ -1,0 +1,7 @@
+spring:
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017/cartdb?replicaSet=rs0&directConnection=true}
+
+cart:
+  indexes:
+    initialize: true
