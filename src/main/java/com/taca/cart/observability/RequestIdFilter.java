@@ -18,19 +18,40 @@ public class RequestIdFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        String requestId = request.getHeader(HEADER);
+        ensure(request, response);
+        chain.doFilter(request, response);
+    }
 
-        if (requestId == null || !requestId.matches("[A-Za-z0-9._:-]{1,64}")) {
-            requestId = UUID.randomUUID().toString();
+    public static String ensure(HttpServletRequest request, HttpServletResponse response) {
+        Object existing = request.getAttribute(ATTRIBUTE);
+        if (existing instanceof String id && valid(id)) {
+            response.setHeader(HEADER, id);
+            return id;
         }
+
+        String requestId = readHeader(request);
+        if (requestId == null) requestId = UUID.randomUUID().toString();
 
         request.setAttribute(ATTRIBUTE, requestId);
         response.setHeader(HEADER, requestId);
-        chain.doFilter(request, response);
+        return requestId;
     }
 
     public static String resolve(HttpServletRequest request) {
         Object value = request.getAttribute(ATTRIBUTE);
-        return value instanceof String id ? id : UUID.randomUUID().toString();
+        return value instanceof String id && valid(id)
+                ? id : UUID.randomUUID().toString();
+    }
+
+    private static String readHeader(HttpServletRequest request) {
+        var values = request.getHeaders(HEADER);
+        if (!values.hasMoreElements()) return null;
+
+        String value = values.nextElement();
+        return !values.hasMoreElements() && valid(value) ? value : null;
+    }
+
+    private static boolean valid(String value) {
+        return value != null && value.matches("[A-Za-z0-9._:-]{1,64}");
     }
 }

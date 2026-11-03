@@ -26,6 +26,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class SecurityConfigTest {
     private static final String TOKEN = "a".repeat(64);
 
+    private static final String INTERNAL_TOKEN = "b".repeat(64);
+
     @Autowired
     private MockMvc mvc;
 
@@ -33,8 +35,9 @@ class SecurityConfigTest {
     private MongoOperations mongoOperations;
 
     @DynamicPropertySource
-    static void gatewayToken(DynamicPropertyRegistry registry) {
+    static void configureTokens(DynamicPropertyRegistry registry) {
         registry.add("CART_GATEWAY_TOKEN", () -> TOKEN);
+        registry.add("CART_INTERNAL_TOKEN", () -> INTERNAL_TOKEN);
     }
 
     @Test
@@ -100,21 +103,21 @@ class SecurityConfigTest {
     @Test
     void shouldBlockBuyerFromInternalApis() throws Exception {
         mvc.perform(get("/api/v1/internal/carts/buyer-001").with(buyer()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
 
         mvc.perform(post("/api/v1/internal/carts/buyer-001/checked-out").with(buyer()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
     void shouldAllowInternalAuthorityOnlyForInternalApis() throws Exception {
-        mvc.perform(get("/api/v1/internal/carts/buyer-001").with(internal()))
+        mvc.perform(get("/api/v1/internal/carts/buyer-001").with(internalCredentials()))
                 .andExpect(status().isOk());
 
-        mvc.perform(post("/api/v1/internal/carts/buyer-001/checked-out").with(internal()))
+        mvc.perform(post("/api/v1/internal/carts/buyer-001/checked-out").with(internalCredentials()))
                 .andExpect(status().isOk());
 
-        mvc.perform(get("/api/v1/cart").with(internal()))
+        mvc.perform(get("/api/v1/cart").with(internalCredentials()))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -149,6 +152,13 @@ class SecurityConfigTest {
     private RequestPostProcessor internal() {
         return user("checkout-service")
                 .authorities(new SimpleGrantedAuthority(CartAuthorities.INTERNAL));
+    }
+
+    private RequestPostProcessor internalCredentials() {
+        return request -> {
+            request.addHeader(InternalServiceAuthenticationFilter.TOKEN_HEADER, INTERNAL_TOKEN);
+            return request;
+        };
     }
 
     @RestController
