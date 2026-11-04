@@ -7,7 +7,7 @@ services:
     ports:
       - "127.0.0.1:27018:27017"
     volumes:
-      - cart_mongo_data:/data/db
+      - cart_mongo7_data:/data/db
     healthcheck:
       test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand({ ping: 1 }).ok\" | grep -q 1"]
       interval: 10s
@@ -16,4 +16,4 @@ services:
       start_period: 15s
 
 volumes:
-  cart_mongo_data:
+  cart_mongo7_data:
