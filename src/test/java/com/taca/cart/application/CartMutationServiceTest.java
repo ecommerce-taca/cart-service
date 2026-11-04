@@ -196,6 +196,31 @@ class CartMutationServiceTest {
         assertEquals(1L, stored.get().version());
     }
 
+    @Test
+    void shouldNotCreateCartWhenDeletingFromMissingCart() {
+        assertError(CartErrorCode.CART_ITEM_NOT_FOUND,
+                () -> service.removeItem(BUYER, "item-001"));
+
+        assertNull(stored.get());
+    }
+
+    @Test
+    void shouldRemoveOnlyRequestedItem() {
+        Cart first = service.addItem(BUYER, sku("sku-001"), 2);
+        String firstItemId = first.items().getFirst().itemId();
+
+        Cart second = service.addItem(BUYER, sku("sku-002"), 3);
+        String secondItemId = second.items().get(1).itemId();
+
+        Cart result = service.removeItem(BUYER, firstItemId);
+
+        assertEquals(1, result.items().size());
+        assertEquals(secondItemId, result.items().getFirst().itemId());
+        assertEquals("sku-002", result.items().getFirst().skuId());
+        assertEquals(3, result.items().getFirst().quantity());
+        assertEquals(3L, result.version());
+    }
+
     private ValidatedSkuSnapshot sku(String skuId) {
         return new ValidatedSkuSnapshot(
                 "product-001", skuId, "shop-001",

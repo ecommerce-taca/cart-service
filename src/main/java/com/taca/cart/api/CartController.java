@@ -11,6 +11,7 @@ import com.taca.cart.api.error.CartException;
 import com.taca.cart.api.validation.IdempotencyKeyValidator;
 import com.taca.cart.application.CartAddItemService;
 import com.taca.cart.application.CartQueryService;
+import com.taca.cart.application.CartRemoveItemService;
 import com.taca.cart.application.CartUpdateItemService;
 import com.taca.cart.observability.RequestIdFilter;
 import com.taca.cart.security.ActorContextResolver;
@@ -27,15 +28,18 @@ public class CartController {
     private final CartQueryService queryService;
     private final CartAddItemService addItemService;
     private final CartUpdateItemService updateItemService;
+    private final CartRemoveItemService removeItemService;
     private final ActorContextResolver actorContextResolver;
 
     public CartController(CartQueryService queryService,
                           CartAddItemService addItemService,
                           CartUpdateItemService updateItemService,
+                          CartRemoveItemService removeItemService,
                           ActorContextResolver actorContextResolver) {
         this.queryService = queryService;
         this.addItemService = addItemService;
         this.updateItemService = updateItemService;
+        this.removeItemService = removeItemService;
         this.actorContextResolver = actorContextResolver;
     }
 
@@ -82,5 +86,15 @@ public class CartController {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(ApiResponse.of(result, RequestIdFilter.resolve(request)));
+    }
+
+    @DeleteMapping("/items/{itemId}")
+    public ResponseEntity<Void> deleteItem(@PathVariable String itemId) {
+        String buyerUserId = actorContextResolver.requireBuyer().buyerUserId();
+        removeItemService.removeItem(buyerUserId, itemId);
+
+        return ResponseEntity.noContent()
+                .cacheControl(CacheControl.noStore())
+                .build();
     }
 }
