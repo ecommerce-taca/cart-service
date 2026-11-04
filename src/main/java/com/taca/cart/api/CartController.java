@@ -4,11 +4,14 @@ import com.taca.cart.api.dto.AddCartItemRequest;
 import com.taca.cart.api.dto.AddCartItemResponse;
 import com.taca.cart.api.dto.ApiResponse;
 import com.taca.cart.api.dto.CartResponse;
+import com.taca.cart.api.dto.UpdateCartItemRequest;
+import com.taca.cart.api.dto.UpdateCartItemResponse;
 import com.taca.cart.api.error.CartErrorCode;
 import com.taca.cart.api.error.CartException;
 import com.taca.cart.api.validation.IdempotencyKeyValidator;
 import com.taca.cart.application.CartAddItemService;
 import com.taca.cart.application.CartQueryService;
+import com.taca.cart.application.CartUpdateItemService;
 import com.taca.cart.observability.RequestIdFilter;
 import com.taca.cart.security.ActorContextResolver;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,13 +26,16 @@ import org.springframework.web.bind.annotation.*;
 public class CartController {
     private final CartQueryService queryService;
     private final CartAddItemService addItemService;
+    private final CartUpdateItemService updateItemService;
     private final ActorContextResolver actorContextResolver;
 
     public CartController(CartQueryService queryService,
                           CartAddItemService addItemService,
+                          CartUpdateItemService updateItemService,
                           ActorContextResolver actorContextResolver) {
         this.queryService = queryService;
         this.addItemService = addItemService;
+        this.updateItemService = updateItemService;
         this.actorContextResolver = actorContextResolver;
     }
 
@@ -59,6 +65,21 @@ public class CartController {
                 buyerUserId, body.productId(), body.skuId(), body.quantity());
 
         return ResponseEntity.status(HttpStatus.CREATED)
+                .cacheControl(CacheControl.noStore())
+                .body(ApiResponse.of(result, RequestIdFilter.resolve(request)));
+    }
+
+    @PutMapping("/items/{itemId}")
+    public ResponseEntity<ApiResponse<UpdateCartItemResponse>> updateItem(
+            @PathVariable String itemId,
+            @Valid @RequestBody UpdateCartItemRequest body,
+            HttpServletRequest request) {
+        String buyerUserId = actorContextResolver.requireBuyer().buyerUserId();
+
+        UpdateCartItemResponse result = updateItemService.updateQuantity(
+                buyerUserId, itemId, body.quantity());
+
+        return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore())
                 .body(ApiResponse.of(result, RequestIdFilter.resolve(request)));
     }
