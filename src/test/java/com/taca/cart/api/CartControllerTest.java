@@ -3,6 +3,7 @@ package com.taca.cart.api;
 import com.taca.cart.api.dto.CartResponse;
 import com.taca.cart.api.error.CartErrorCode;
 import com.taca.cart.api.error.CartException;
+import com.taca.cart.application.CartAddItemService;
 import com.taca.cart.application.CartQueryService;
 import com.taca.cart.domain.Cart;
 import com.taca.cart.domain.CartItem;
@@ -39,6 +40,9 @@ class CartControllerTest {
 
     @MockitoBean
     private CartQueryService queryService;
+
+    @MockitoBean
+    private CartAddItemService addItemService;
 
     @DynamicPropertySource
     static void configureTokens(DynamicPropertyRegistry registry) {
@@ -141,8 +145,7 @@ class CartControllerTest {
         CartItem item = new CartItem(
                 "item-001", "product-001", "sku-001", "shop-001",
                 2, 1L, "Cotton jacket", "Black / L",
-                249000L, true, now, now
-        );
+                249000L, true, now, now);
 
         Cart cart = new Cart("cart-001", "buyer-001", List.of(item), 1L, now, now);
         return CartResponse.fromSnapshot(Optional.of(cart));
