@@ -8,6 +8,10 @@ spring:
   data:
     mongodb:
       auto-index-creation: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      accept-float-as-int: false
 
 server:
   port: ${SERVER_PORT:1204}
