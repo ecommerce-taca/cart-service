@@ -8,6 +8,10 @@ spring:
   data:
     mongodb:
       auto-index-creation: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      accept-float-as-int: false
 
 server:
   port: ${SERVER_PORT:1204}
@@ -21,6 +25,7 @@ cart:
   write-retry-max: ${CART_WRITE_RETRY_MAX:3}
 
 product:
+  base-url: ${PRODUCT_BASE_URL:}
   timeout: ${PRODUCT_TIMEOUT:2s}
   cache-ttl: ${PRODUCT_CACHE_TTL:30s}
   max-concurrency: ${PRODUCT_MAX_CONCURRENCY:10}
