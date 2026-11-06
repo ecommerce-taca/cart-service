@@ -3,10 +3,7 @@ package com.taca.cart.api;
 import com.taca.cart.api.dto.UpdateCartItemResponse;
 import com.taca.cart.api.error.CartErrorCode;
 import com.taca.cart.api.error.CartException;
-import com.taca.cart.application.CartAddItemService;
-import com.taca.cart.application.CartQueryService;
-import com.taca.cart.application.CartRemoveItemService;
-import com.taca.cart.application.CartUpdateItemService;
+import com.taca.cart.application.*;
 import com.taca.cart.security.ActorContextResolver;
 import com.taca.cart.security.SecurityConfig;
 import org.junit.jupiter.api.Test;
@@ -46,6 +43,9 @@ class CartUpdateItemControllerTest {
 
     @MockitoBean
     private CartRemoveItemService removeItemService;
+
+    @MockitoBean
+    private CartIdempotentAddItemService idempotentAddItemService;
 
     @DynamicPropertySource
     static void configureTokens(DynamicPropertyRegistry registry) {

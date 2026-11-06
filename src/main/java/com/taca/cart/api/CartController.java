@@ -6,10 +6,9 @@ import com.taca.cart.api.dto.ApiResponse;
 import com.taca.cart.api.dto.CartResponse;
 import com.taca.cart.api.dto.UpdateCartItemRequest;
 import com.taca.cart.api.dto.UpdateCartItemResponse;
-import com.taca.cart.api.error.CartErrorCode;
-import com.taca.cart.api.error.CartException;
 import com.taca.cart.api.validation.IdempotencyKeyValidator;
 import com.taca.cart.application.CartAddItemService;
+import com.taca.cart.application.CartIdempotentAddItemService;
 import com.taca.cart.application.CartQueryService;
 import com.taca.cart.application.CartRemoveItemService;
 import com.taca.cart.application.CartUpdateItemService;
@@ -27,17 +26,21 @@ import org.springframework.web.bind.annotation.*;
 public class CartController {
     private final CartQueryService queryService;
     private final CartAddItemService addItemService;
+    private final CartIdempotentAddItemService idempotentAddItemService;
     private final CartUpdateItemService updateItemService;
     private final CartRemoveItemService removeItemService;
     private final ActorContextResolver actorContextResolver;
 
-    public CartController(CartQueryService queryService,
-                          CartAddItemService addItemService,
-                          CartUpdateItemService updateItemService,
-                          CartRemoveItemService removeItemService,
-                          ActorContextResolver actorContextResolver) {
+    public CartController(
+            CartQueryService queryService,
+            CartAddItemService addItemService,
+            CartIdempotentAddItemService idempotentAddItemService,
+            CartUpdateItemService updateItemService,
+            CartRemoveItemService removeItemService,
+            ActorContextResolver actorContextResolver) {
         this.queryService = queryService;
         this.addItemService = addItemService;
+        this.idempotentAddItemService = idempotentAddItemService;
         this.updateItemService = updateItemService;
         this.removeItemService = removeItemService;
         this.actorContextResolver = actorContextResolver;
@@ -54,15 +57,20 @@ public class CartController {
     }
 
     @PostMapping("/items")
-    public ResponseEntity<ApiResponse<AddCartItemResponse>> addItem(
+    public ResponseEntity<Object> addItem(
             @Valid @RequestBody AddCartItemRequest body,
             HttpServletRequest request) {
         String buyerUserId = actorContextResolver.requireBuyer().buyerUserId();
+        String requestId = RequestIdFilter.resolve(request);
+        var key = IdempotencyKeyValidator.read(request);
 
-        if (IdempotencyKeyValidator.read(request).isPresent()) {
-            throw new CartException(
-                    CartErrorCode.CART_INVALID_INPUT,
-                    "Idempotency-Key is not supported yet");
+        if (key.isPresent()) {
+            var result = idempotentAddItemService.addItem(
+                    buyerUserId, key.orElseThrow(), body, requestId);
+
+            return ResponseEntity.status(result.responseStatus())
+                    .cacheControl(CacheControl.noStore())
+                    .body(result.response());
         }
 
         AddCartItemResponse result = addItemService.addItem(
@@ -70,7 +78,7 @@ public class CartController {
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .cacheControl(CacheControl.noStore())
-                .body(ApiResponse.of(result, RequestIdFilter.resolve(request)));
+                .body(ApiResponse.of(result, requestId));
     }
 
     @PutMapping("/items/{itemId}")

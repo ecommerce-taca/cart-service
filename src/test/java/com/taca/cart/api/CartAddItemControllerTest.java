@@ -3,10 +3,7 @@ package com.taca.cart.api;
 import com.taca.cart.api.dto.AddCartItemResponse;
 import com.taca.cart.api.error.CartErrorCode;
 import com.taca.cart.api.error.CartException;
-import com.taca.cart.application.CartAddItemService;
-import com.taca.cart.application.CartQueryService;
-import com.taca.cart.application.CartRemoveItemService;
-import com.taca.cart.application.CartUpdateItemService;
+import com.taca.cart.application.*;
 import com.taca.cart.security.ActorContextResolver;
 import com.taca.cart.security.SecurityConfig;
 import org.junit.jupiter.api.Test;
@@ -48,6 +45,9 @@ class CartAddItemControllerTest {
 
     @MockitoBean
     private CartRemoveItemService removeItemService;
+
+    @MockitoBean
+    private CartIdempotentAddItemService idempotentAddItemService;
 
     @DynamicPropertySource
     static void configureTokens(DynamicPropertyRegistry registry) {
@@ -154,15 +154,15 @@ class CartAddItemControllerTest {
     }
 
     @Test
-    void shouldRejectIdempotencyKeyUntilPhase5() throws Exception {
+    void shouldRejectInvalidIdempotencyKey() throws Exception {
         mvc.perform(post(PATH).with(gateway("buyer-001"))
-                        .header("Idempotency-Key", "add-item-001")
+                        .header("Idempotency-Key", "invalid key")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(VALID_BODY))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("CART_INVALID_INPUT"));
 
-        verifyNoInteractions(addItemService);
+        verifyNoInteractions(addItemService, idempotentAddItemService);
     }
 
     @Test

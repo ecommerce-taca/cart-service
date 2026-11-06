@@ -87,6 +87,7 @@ class CartCrudHttpIntegrationTest {
     @BeforeEach
     void setUp() {
         mongoTemplate.getCollection("carts").deleteMany(new Document());
+        mongoTemplate.getCollection("cart_idempotency_keys").deleteMany(new Document());
     }
 
     @Test
@@ -371,19 +372,53 @@ class CartCrudHttpIntegrationTest {
     }
 
     @Test
-    void shouldRejectIdempotencyKeyUntilPhase5() throws Exception {
-        mvc.perform(post(CART_PATH + "/items")
+    void shouldReplayKeyedPostWithoutCallingProductAgain() throws Exception {
+        when(productCatalogClient.validateSku("product-001", "sku-001"))
+                .thenReturn(sku("sku-001"));
+
+        String body = """
+            {"product_id":"product-001","sku_id":"sku-001","quantity":2}
+            """;
+
+        MvcResult first = mvc.perform(post(CART_PATH + "/items")
                         .with(gateway(BUYER))
                         .header("Idempotency-Key", "add-item-001")
+                        .header("X-Request-ID", "req-original")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"product_id":"product-001","sku_id":"sku-001","quantity":2}
-                                """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("CART_INVALID_INPUT"));
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.quantity").value(2))
+                .andExpect(jsonPath("$.meta.request_id").value("req-original"))
+                .andReturn();
 
-        assertEquals(0L, countCarts());
-        verifyNoInteractions(productCatalogClient);
+        Document before = rawCart(BUYER);
+
+        when(productCatalogClient.validateSku("product-001", "sku-001"))
+                .thenThrow(new CartException(
+                        CartErrorCode.CART_DEPENDENCY_UNAVAILABLE,
+                        "Product Catalog is unavailable"));
+
+        MvcResult replay = mvc.perform(post(CART_PATH + "/items")
+                        .with(gateway(BUYER))
+                        .header("Idempotency-Key", "add-item-001")
+                        .header("X-Request-ID", "req-retry")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.quantity").value(2))
+                .andExpect(jsonPath("$.meta.request_id").value("req-original"))
+                .andReturn();
+
+        assertEquals(
+                JSON.readTree(first.getResponse().getContentAsString()),
+                JSON.readTree(replay.getResponse().getContentAsString()));
+
+        assertEquals(before, rawCart(BUYER));
+        assertEquals(1L, before.getLong("version"));
+        assertEquals(1L, mongoTemplate.getCollection("cart_idempotency_keys").countDocuments());
+
+        verify(productCatalogClient, times(1))
+                .validateSku("product-001", "sku-001");
     }
 
     @Test
@@ -437,6 +472,39 @@ class CartCrudHttpIntegrationTest {
         assertTrue(callbacks.get() >= 3);
     }
 
+    @Test
+    void shouldRejectDifferentBodyWithSameKeyWithoutMutatingCart() throws Exception {
+        when(productCatalogClient.validateSku("product-001", "sku-001"))
+                .thenReturn(sku("sku-001"));
+
+        mvc.perform(post(CART_PATH + "/items")
+                        .with(gateway(BUYER))
+                        .header("Idempotency-Key", "add-item-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"product_id":"product-001","sku_id":"sku-001","quantity":2}
+                            """))
+                .andExpect(status().isCreated());
+
+        Document before = rawCart(BUYER);
+
+        mvc.perform(post(CART_PATH + "/items")
+                        .with(gateway(BUYER))
+                        .header("Idempotency-Key", "add-item-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {"product_id":"product-001","sku_id":"sku-001","quantity":3}
+                            """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("CART_IDEMPOTENCY_CONFLICT"));
+
+        assertEquals(before, rawCart(BUYER));
+        assertEquals(1L, mongoTemplate.getCollection("cart_idempotency_keys").countDocuments());
+
+        verify(productCatalogClient, times(1))
+                .validateSku("product-001", "sku-001");
+    }
+    
     private MvcResult postItem(String buyerUserId, String skuId, int quantity) throws Exception {
         when(productCatalogClient.validateSku("product-001", skuId))
                 .thenReturn(sku(skuId));
