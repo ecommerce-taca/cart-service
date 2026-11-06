@@ -1,6 +1,5 @@
 package com.taca.cart.application;
 
-import com.mongodb.MongoException;
 import com.taca.cart.api.dto.AddCartItemRequest;
 import com.taca.cart.api.error.CartErrorCode;
 import com.taca.cart.api.error.CartException;
@@ -13,14 +12,12 @@ import com.taca.cart.persistence.document.CartIdempotencyIdDocument;
 import com.taca.cart.persistence.document.CartIdempotencyKeyDocument;
 import com.taca.cart.persistence.mapper.CartPersistenceMapper;
 import com.taca.cart.persistence.repository.CartIdempotencyMongoRepository;
-import org.springframework.dao.DataAccessException;
 import org.springframework.data.mongodb.MongoTransactionManager;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
@@ -28,6 +25,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 public class CartIdempotencyTransactionService {
@@ -36,6 +34,7 @@ public class CartIdempotencyTransactionService {
     private final MongoOperations mongoOperations;
     private final CartMutationService mutationService;
     private final CartRequestHasher hasher;
+    private final CartIdempotencyRetryPolicy retryPolicy;
     private final CartProperties properties;
     private final Clock clock;
     private final TransactionTemplate transaction;
@@ -46,6 +45,7 @@ public class CartIdempotencyTransactionService {
             MongoOperations mongoOperations,
             CartMutationService mutationService,
             CartRequestHasher hasher,
+            CartIdempotencyRetryPolicy retryPolicy,
             CartProperties properties,
             Clock clock,
             MongoTransactionManager transactionManager) {
@@ -54,6 +54,7 @@ public class CartIdempotencyTransactionService {
         this.mongoOperations = mongoOperations;
         this.mutationService = mutationService;
         this.hasher = hasher;
+        this.retryPolicy = retryPolicy;
         this.properties = properties;
         this.clock = clock;
         this.transaction = new TransactionTemplate(transactionManager);
@@ -72,19 +73,48 @@ public class CartIdempotencyTransactionService {
             throw new IllegalArgumentException("Validated SKU does not match request");
         }
 
-        String requestHash = hasher.hash(request);
+        String hash = hasher.hash(request);
         CartIdempotencyId id = new CartIdempotencyId(buyerUserId, key);
 
-        try {
-            return Objects.requireNonNull(
-                    transaction.execute(status ->
-                            executeInsideTransaction(id, requestHash, request, sku, requestId)),
-                    "Transaction returned null");
-        } catch (DataAccessException | MongoException | TransactionException ex) {
-            throw new CartException(
-                    CartErrorCode.CART_STORAGE_UNAVAILABLE,
-                    "Cart transaction storage is unavailable");
+        for (int attempt = 0; attempt <= properties.writeRetryMax(); attempt++) {
+            try {
+                return Objects.requireNonNull(
+                        transaction.execute(status ->
+                                executeInsideTransaction(id, hash, request, sku, requestId)),
+                        "Transaction returned null");
+            } catch (RuntimeException ex) {
+                var decision = retryPolicy.classify(ex);
+
+                if (decision == CartIdempotencyRetryPolicy.Decision.UNKNOWN_COMMIT) {
+                    throw new CartException(
+                            CartErrorCode.CART_STORAGE_UNAVAILABLE,
+                            "Cart commit outcome is unknown; retry only with the same Idempotency-Key");
+                }
+
+                if (decision == CartIdempotencyRetryPolicy.Decision.RETRY_TRANSACTION
+                        && attempt < properties.writeRetryMax()) {
+                    backoff(attempt);
+                    continue;
+                }
+
+                if (ex instanceof CartException cartException) {
+                    throw cartException;
+                }
+
+                if (decision == CartIdempotencyRetryPolicy.Decision.RETRY_TRANSACTION
+                        || retryPolicy.isStorageFailure(ex)) {
+                    throw new CartException(
+                            CartErrorCode.CART_STORAGE_UNAVAILABLE,
+                            "Cart transaction storage is unavailable");
+                }
+
+                throw ex;
+            }
         }
+
+        throw new CartException(
+                CartErrorCode.CART_VERSION_CONFLICT,
+                "Cart transaction retry limit exceeded");
     }
 
     private CartIdempotencyKey executeInsideTransaction(
@@ -97,6 +127,7 @@ public class CartIdempotencyTransactionService {
 
         if (existing.isPresent()) {
             CartIdempotencyKey saved = existing.orElseThrow();
+
             if (saved.expiresAt().isAfter(now)) {
                 if (!saved.requestHash().equals(hash)) {
                     throw new CartException(
@@ -157,6 +188,20 @@ public class CartIdempotencyTransactionService {
             throw new CartException(
                     CartErrorCode.CART_VERSION_CONFLICT,
                     "Idempotency key changed during transaction");
+        }
+    }
+
+    private void backoff(int attempt) {
+        long baseMillis = Math.min(160L, 20L * (1L << Math.min(attempt, 3)));
+        long delayMillis = baseMillis + ThreadLocalRandom.current().nextLong(11L);
+
+        try {
+            Thread.sleep(delayMillis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new CartException(
+                    CartErrorCode.CART_STORAGE_UNAVAILABLE,
+                    "Cart transaction retry was interrupted");
         }
     }
 }
