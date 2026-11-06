@@ -34,6 +34,7 @@ public class CartIdempotencyTransactionService {
     private final MongoOperations mongoOperations;
     private final CartMutationService mutationService;
     private final CartRequestHasher hasher;
+    private final CartIdempotencyLookupService lookupService;
     private final CartIdempotencyRetryPolicy retryPolicy;
     private final CartProperties properties;
     private final Clock clock;
@@ -45,6 +46,7 @@ public class CartIdempotencyTransactionService {
             MongoOperations mongoOperations,
             CartMutationService mutationService,
             CartRequestHasher hasher,
+            CartIdempotencyLookupService lookupService,
             CartIdempotencyRetryPolicy retryPolicy,
             CartProperties properties,
             Clock clock,
@@ -54,6 +56,7 @@ public class CartIdempotencyTransactionService {
         this.mongoOperations = mongoOperations;
         this.mutationService = mutationService;
         this.hasher = hasher;
+        this.lookupService = lookupService;
         this.retryPolicy = retryPolicy;
         this.properties = properties;
         this.clock = clock;
@@ -86,9 +89,7 @@ public class CartIdempotencyTransactionService {
                 var decision = retryPolicy.classify(ex);
 
                 if (decision == CartIdempotencyRetryPolicy.Decision.UNKNOWN_COMMIT) {
-                    throw new CartException(
-                            CartErrorCode.CART_STORAGE_UNAVAILABLE,
-                            "Cart commit outcome is unknown; retry only with the same Idempotency-Key");
+                    return resolveUnknownCommit(id, hash);
                 }
 
                 if (decision == CartIdempotencyRetryPolicy.Decision.RETRY_TRANSACTION
@@ -115,6 +116,24 @@ public class CartIdempotencyTransactionService {
         throw new CartException(
                 CartErrorCode.CART_VERSION_CONFLICT,
                 "Cart transaction retry limit exceeded");
+    }
+
+    private CartIdempotencyKey resolveUnknownCommit(
+            CartIdempotencyId id, String hash) {
+        try {
+            var replay = lookupService.findReplay(
+                    id.buyerUserId(), id.key(), hash);
+
+            if (replay.isPresent()) return replay.orElseThrow();
+        } catch (CartException ex) {
+            if (ex.getCode() == CartErrorCode.CART_IDEMPOTENCY_CONFLICT) {
+                throw ex;
+            }
+        }
+
+        throw new CartException(
+                CartErrorCode.CART_STORAGE_UNAVAILABLE,
+                "Cart commit outcome is unknown; retry only with the same Idempotency-Key");
     }
 
     private CartIdempotencyKey executeInsideTransaction(
