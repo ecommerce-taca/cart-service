@@ -1,4 +1,3 @@
-
 package com.taca.cart.persistence;
 
 import com.taca.cart.api.error.CartErrorCode;
@@ -13,6 +12,7 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -45,6 +45,8 @@ public class CartCasPersistence {
         validateBuyer(buyerUserId);
         Objects.requireNonNull(mutation, "mutation");
 
+        boolean insideTransaction = TransactionSynchronizationManager.isActualTransactionActive();
+
         for (int attempt = 0; attempt <= properties.writeRetryMax(); attempt++) {
             Optional<Cart> snapshot = findByBuyerUserId(buyerUserId);
             Cart candidate = Objects.requireNonNull(mutation.apply(snapshot), "mutation result");
@@ -53,13 +55,13 @@ public class CartCasPersistence {
                 validateNewCart(candidate, buyerUserId);
                 Cart created = new Cart(
                         candidate.id(), buyerUserId, candidate.items(),
-                        1L, candidate.createdAt(), candidate.updatedAt()
-                );
+                        1L, candidate.createdAt(), candidate.updatedAt());
 
                 try {
                     mongoOperations.insert(mapper.toDocument(created));
                     return created;
                 } catch (DuplicateKeyException ex) {
+                    if (insideTransaction) throw ex;
                     if (attempt == properties.writeRetryMax()) throw versionConflict();
                     continue;
                 }
@@ -82,15 +84,16 @@ public class CartCasPersistence {
 
             var result = mongoOperations.updateFirst(query, update, CartDocument.class);
 
-            if (result.getMatchedCount() == 1) {
+            if (result.getMatchedCount() == 1L) {
                 return new Cart(
                         current.id(), current.buyerUserId(), candidate.items(),
                         Math.addExact(current.version(), 1L),
-                        current.createdAt(), updatedAt
-                );
+                        current.createdAt(), updatedAt);
             }
 
-            if (attempt == properties.writeRetryMax()) throw versionConflict();
+            if (insideTransaction || attempt == properties.writeRetryMax()) {
+                throw versionConflict();
+            }
         }
 
         throw versionConflict();
@@ -119,13 +122,13 @@ public class CartCasPersistence {
 
     private Instant nextUpdatedAt(Instant previous) {
         Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
-        return now.isAfter(previous) ? now : previous.truncatedTo(ChronoUnit.MILLIS).plusMillis(1);
+        return now.isAfter(previous)
+                ? now : previous.truncatedTo(ChronoUnit.MILLIS).plusMillis(1);
     }
 
     private CartException versionConflict() {
         return new CartException(
                 CartErrorCode.CART_VERSION_CONFLICT,
-                "Cart was modified concurrently. Please retry."
-        );
+                "Cart was modified concurrently. Please retry.");
     }
 }
