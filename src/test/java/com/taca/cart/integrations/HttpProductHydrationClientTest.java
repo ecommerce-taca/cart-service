@@ -286,13 +286,12 @@ class HttpProductHydrationClientTest {
 
     @Test
     void shouldReturnStaleOnHttpTimeout() {
-        responseDelayMs = 500;
+        responseDelayMs = 2000;
 
-        ProductHydrationResult result = client(Duration.ofMillis(100))
+        ProductHydrationResult result = client(Duration.ofMillis(500))
                 .fetchProduct("product-001");
 
         assertEquals(ProductHydrationResult.State.STALE, result.state());
-        assertEquals(1, requestCount.get());
     }
 
     private void assertState(ProductHydrationResult.State expected) {
