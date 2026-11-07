@@ -29,3 +29,10 @@ product:
   timeout: ${PRODUCT_TIMEOUT:2s}
   cache-ttl: ${PRODUCT_CACHE_TTL:30s}
   max-concurrency: ${PRODUCT_MAX_CONCURRENCY:10}
+
+inventory:
+  base-url: ${INVENTORY_BASE_URL:}
+  internal-token: ${INVENTORY_INTERNAL_TOKEN:}
+  timeout: ${INVENTORY_TIMEOUT:1s}
+  max-batch-size: ${INVENTORY_MAX_BATCH_SIZE:100}
+  max-concurrency: ${INVENTORY_MAX_CONCURRENCY:10}
