@@ -147,7 +147,7 @@ public class CartHydrationOrchestrator {
 
         try {
             for (int offset = 0; offset < ordered.size(); offset += inventoryBatchSize) {
-                long remaining = remainingNanos(started);
+                long remaining = Math.min(remainingNanos(started), inventoryTimeoutNanos);
                 if (remaining <= 0) break;
 
                 Set<String> batch = Set.copyOf(
