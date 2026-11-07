@@ -67,6 +67,8 @@ class CartCrudHttpIntegrationTest {
         registry.add("spring.mongodb.uri", () -> MONGO.getReplicaSetUrl("cartdb_test"));
         registry.add("CART_GATEWAY_TOKEN", () -> GATEWAY_TOKEN);
         registry.add("CART_INTERNAL_TOKEN", () -> INTERNAL_TOKEN);
+        registry.add("product.base-url", () -> "");
+        registry.add("inventory.base-url", () -> "");
     }
 
     @Autowired
@@ -123,7 +125,7 @@ class CartCrudHttpIntegrationTest {
                 .andExpect(jsonPath("$.data.items[0].sku_id").value("sku-001"))
                 .andExpect(jsonPath("$.data.items[0].quantity").value(2))
                 .andExpect(jsonPath("$.data.items[0].line_total").value(498000))
-                .andExpect(jsonPath("$.data.items[0].availability_status").value("UNKNOWN"));
+                .andExpect(jsonPath("$.data.items[0].availability_status").value("STALE"));
 
         Document stored = rawCart(BUYER);
         assertEquals(cartId, stored.getString("_id"));
@@ -504,7 +506,7 @@ class CartCrudHttpIntegrationTest {
         verify(productCatalogClient, times(1))
                 .validateSku("product-001", "sku-001");
     }
-    
+
     private MvcResult postItem(String buyerUserId, String skuId, int quantity) throws Exception {
         when(productCatalogClient.validateSku("product-001", skuId))
                 .thenReturn(sku(skuId));
