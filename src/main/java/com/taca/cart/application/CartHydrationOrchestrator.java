@@ -9,6 +9,7 @@ import com.taca.cart.domain.Cart;
 import com.taca.cart.domain.CartItem;
 import com.taca.cart.integrations.InventoryAvailabilityClient;
 import com.taca.cart.observability.CartDependencyMetrics;
+import com.taca.cart.observability.TraceContextTasks;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -128,8 +129,8 @@ public class CartHydrationOrchestrator {
 
         try {
             for (String productId : productIds) {
-                submitted.add(completion.submit(() ->
-                        new ProductFetch(productId, productService.getProduct(productId))));
+                submitted.add(completion.submit(TraceContextTasks.wrap(() ->
+                        new ProductFetch(productId, productService.getProduct(productId)))));
             }
 
             int completed = 0;
@@ -182,9 +183,10 @@ public class CartHydrationOrchestrator {
                 Set<String> batch = Set.copyOf(
                         ordered.subList(offset,
                                 Math.min(offset + inventoryBatchSize, ordered.size())));
-
+                
                 Future<Map<String, InventoryStock>> future =
-                        executor.submit(() -> inventoryClient.fetchAvailability(batch));
+                        executor.submit(TraceContextTasks.wrap(
+                                () -> inventoryClient.fetchAvailability(batch)));
 
                 try {
                     Map<String, InventoryStock> fetched =

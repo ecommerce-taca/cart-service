@@ -5,6 +5,7 @@ import com.taca.cart.application.ValidatedSkuSnapshot;
 import com.taca.cart.config.ProductProperties;
 import com.taca.cart.observability.CartDependencyMetrics;
 import com.taca.cart.observability.CartDependencyMetrics.ProductHttpOutcome;
+import com.taca.cart.observability.OutboundHttpTracing;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -35,19 +36,27 @@ public class HttpProductHydrationClient implements ProductHydrationClient {
     private final URI baseUri;
     private final Duration timeout;
     private final CartDependencyMetrics metrics;
-
+    private final OutboundHttpTracing tracing;
 
     public HttpProductHydrationClient(
             ProductProperties properties,
             String baseUrl) {
-        this(properties, baseUrl, null);
+        this(properties, baseUrl, null, null);
+    }
+
+    public HttpProductHydrationClient(
+            ProductProperties properties,
+            String baseUrl,
+            CartDependencyMetrics metrics) {
+        this(properties, baseUrl, metrics, null);
     }
 
     @Autowired
     public HttpProductHydrationClient(
             ProductProperties properties,
             @Value("${product.base-url:}") String baseUrl,
-            CartDependencyMetrics metrics) {
+            CartDependencyMetrics metrics,
+            OutboundHttpTracing tracing) {
         this.timeout = properties.timeout();
         if (timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("Product timeout must be positive");
@@ -60,6 +69,7 @@ public class HttpProductHydrationClient implements ProductHydrationClient {
                 .build();
         this.jsonMapper = JsonMapper.builder().build();
         this.metrics = metrics;
+        this.tracing = tracing;
     }
 
 
@@ -69,19 +79,21 @@ public class HttpProductHydrationClient implements ProductHydrationClient {
             return ProductHydrationResult.stale();
         }
 
-        HttpRequest request = HttpRequest.newBuilder(
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(
                         baseUri.resolve(PRODUCT_PATH + productId))
                 .timeout(timeout)
                 .header("Accept", "application/json")
-                .GET()
-                .build();
+                .GET();
 
         long startedAt = System.nanoTime();
         ProductHttpOutcome outcome = ProductHttpOutcome.IO_ERROR;
 
         try {
-            HttpResponse<String> response = httpClient.send(
-                    request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<String> response = tracing == null
+                    ? httpClient.send(requestBuilder.build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                    : tracing.send(httpClient, requestBuilder,
+                    "product.catalog.get", "/api/v1/products/{productId}");
 
             if (response.statusCode() == 404) {
                 outcome = ProductHttpOutcome.NOT_FOUND;
