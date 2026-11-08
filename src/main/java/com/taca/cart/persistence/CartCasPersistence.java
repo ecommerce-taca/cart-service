@@ -4,8 +4,12 @@ import com.taca.cart.api.error.CartErrorCode;
 import com.taca.cart.api.error.CartException;
 import com.taca.cart.config.CartProperties;
 import com.taca.cart.domain.Cart;
+import com.taca.cart.observability.CartMetrics;
+import com.taca.cart.observability.CartMetrics.CasCause;
+import com.taca.cart.observability.CartMetrics.MutationResult;
 import com.taca.cart.persistence.document.CartDocument;
 import com.taca.cart.persistence.mapper.CartPersistenceMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -25,13 +29,23 @@ public class CartCasPersistence {
     private final MongoOperations mongoOperations;
     private final CartPersistenceMapper mapper;
     private final CartProperties properties;
+    private final CartMetrics metrics;
 
     public CartCasPersistence(MongoOperations mongoOperations,
                               CartPersistenceMapper mapper,
                               CartProperties properties) {
+        this(mongoOperations, mapper, properties, null);
+    }
+
+    @Autowired
+    public CartCasPersistence(MongoOperations mongoOperations,
+                              CartPersistenceMapper mapper,
+                              CartProperties properties,
+                              CartMetrics metrics) {
         this.mongoOperations = mongoOperations;
         this.mapper = mapper;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     public Optional<Cart> findByBuyerUserId(String buyerUserId) {
@@ -45,58 +59,105 @@ public class CartCasPersistence {
         validateBuyer(buyerUserId);
         Objects.requireNonNull(mutation, "mutation");
 
-        boolean insideTransaction = TransactionSynchronizationManager.isActualTransactionActive();
+        long startedAt = System.nanoTime();
+        MutationResult outcome = MutationResult.FAILED;
 
-        for (int attempt = 0; attempt <= properties.writeRetryMax(); attempt++) {
-            Optional<Cart> snapshot = findByBuyerUserId(buyerUserId);
-            Cart candidate = Objects.requireNonNull(mutation.apply(snapshot), "mutation result");
+        try {
+            boolean insideTransaction =
+                    TransactionSynchronizationManager.isActualTransactionActive();
 
-            if (snapshot.isEmpty()) {
-                validateNewCart(candidate, buyerUserId);
-                Cart created = new Cart(
-                        candidate.id(), buyerUserId, candidate.items(),
-                        1L, candidate.createdAt(), candidate.updatedAt());
+            for (int attempt = 0; attempt <= properties.writeRetryMax(); attempt++) {
+                Optional<Cart> snapshot = findByBuyerUserId(buyerUserId);
+                Cart candidate = Objects.requireNonNull(
+                        mutation.apply(snapshot), "mutation result");
 
-                try {
-                    mongoOperations.insert(mapper.toDocument(created));
-                    return created;
-                } catch (DuplicateKeyException ex) {
-                    if (insideTransaction) throw ex;
-                    if (attempt == properties.writeRetryMax()) throw versionConflict();
-                    continue;
+                if (snapshot.isEmpty()) {
+                    validateNewCart(candidate, buyerUserId);
+
+                    Cart created = new Cart(
+                            candidate.id(), buyerUserId, candidate.items(),
+                            1L, candidate.createdAt(), candidate.updatedAt());
+
+                    try {
+                        mongoOperations.insert(mapper.toDocument(created));
+                        outcome = MutationResult.CREATED;
+                        return created;
+                    } catch (DuplicateKeyException ex) {
+                        recordConflict(CasCause.DUPLICATE_KEY);
+
+                        if (insideTransaction) throw ex;
+
+                        if (attempt == properties.writeRetryMax()) {
+                            recordRetryExhausted();
+                            throw versionConflict();
+                        }
+
+                        recordRetry(CasCause.DUPLICATE_KEY);
+                        continue;
+                    }
                 }
+
+                Cart current = snapshot.orElseThrow();
+                validateExistingCart(candidate, current);
+
+                if (current.items().equals(candidate.items())) {
+                    outcome = MutationResult.NOOP;
+                    return current;
+                }
+
+                Instant updatedAt = nextUpdatedAt(current.updatedAt());
+
+                Query query = Query.query(Criteria.where("_id").is(current.id())
+                        .and("buyer_user_id").is(current.buyerUserId())
+                        .and("version").is(current.version()));
+
+                Update update = new Update()
+                        .set("items", mapper.toDocument(candidate).items())
+                        .set("updated_at", updatedAt)
+                        .inc("version", 1L);
+
+                var result = mongoOperations.updateFirst(
+                        query, update, CartDocument.class);
+
+                if (result.getMatchedCount() == 1L) {
+                    outcome = MutationResult.UPDATED;
+                    return new Cart(
+                            current.id(), current.buyerUserId(), candidate.items(),
+                            Math.addExact(current.version(), 1L),
+                            current.createdAt(), updatedAt);
+                }
+
+                recordConflict(CasCause.VERSION);
+
+                if (insideTransaction || attempt == properties.writeRetryMax()) {
+                    if (attempt == properties.writeRetryMax()) {
+                        recordRetryExhausted();
+                    }
+                    throw versionConflict();
+                }
+
+                recordRetry(CasCause.VERSION);
             }
 
-            Cart current = snapshot.orElseThrow();
-            validateExistingCart(candidate, current);
-
-            if (current.items().equals(candidate.items())) return current;
-
-            Instant updatedAt = nextUpdatedAt(current.updatedAt());
-            Query query = Query.query(Criteria.where("_id").is(current.id())
-                    .and("buyer_user_id").is(current.buyerUserId())
-                    .and("version").is(current.version()));
-
-            Update update = new Update()
-                    .set("items", mapper.toDocument(candidate).items())
-                    .set("updated_at", updatedAt)
-                    .inc("version", 1L);
-
-            var result = mongoOperations.updateFirst(query, update, CartDocument.class);
-
-            if (result.getMatchedCount() == 1L) {
-                return new Cart(
-                        current.id(), current.buyerUserId(), candidate.items(),
-                        Math.addExact(current.version(), 1L),
-                        current.createdAt(), updatedAt);
-            }
-
-            if (insideTransaction || attempt == properties.writeRetryMax()) {
-                throw versionConflict();
+            throw versionConflict();
+        } finally {
+            if (metrics != null) {
+                metrics.recordMutation(outcome,
+                        System.nanoTime() - startedAt);
             }
         }
+    }
 
-        throw versionConflict();
+    private void recordConflict(CasCause cause) {
+        if (metrics != null) metrics.recordConflict(cause);
+    }
+
+    private void recordRetry(CasCause cause) {
+        if (metrics != null) metrics.recordRetry(cause);
+    }
+
+    private void recordRetryExhausted() {
+        if (metrics != null) metrics.recordRetryExhausted();
     }
 
     private void validateBuyer(String buyerUserId) {
@@ -106,7 +167,8 @@ public class CartCasPersistence {
     }
 
     private void validateNewCart(Cart candidate, String buyerUserId) {
-        if (!buyerUserId.equals(candidate.buyerUserId()) || candidate.version() != 0L) {
+        if (!buyerUserId.equals(candidate.buyerUserId())
+                || candidate.version() != 0L) {
             throw new IllegalArgumentException("Invalid initial cart state");
         }
     }
@@ -116,7 +178,8 @@ public class CartCasPersistence {
                 || !current.buyerUserId().equals(candidate.buyerUserId())
                 || current.version() != candidate.version()
                 || !current.createdAt().equals(candidate.createdAt())) {
-            throw new IllegalArgumentException("Mutation must preserve cart identity and version");
+            throw new IllegalArgumentException(
+                    "Mutation must preserve cart identity and version");
         }
     }
 
