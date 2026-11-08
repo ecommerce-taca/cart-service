@@ -2,6 +2,9 @@ package com.taca.cart.application;
 
 import com.taca.cart.config.ProductProperties;
 import com.taca.cart.integrations.ProductHydrationClient;
+import com.taca.cart.observability.CartDependencyMetrics;
+import com.taca.cart.observability.CartDependencyMetrics.CacheLookup;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -23,14 +26,27 @@ public class CachedProductHydrationService {
     private final ConcurrentHashMap<String, CompletableFuture<ProductHydrationResult>> inFlight =
             new ConcurrentHashMap<>();
     private final Object evictionLock = new Object();
+    private final CartDependencyMetrics metrics;
 
-    public CachedProductHydrationService(ProductHydrationClient client,
-                                         ProductProperties properties,
-                                         Clock clock) {
+
+    public CachedProductHydrationService(
+            ProductHydrationClient client,
+            ProductProperties properties,
+            Clock clock) {
+        this(client, properties, clock, null);
+    }
+
+    @Autowired
+    public CachedProductHydrationService(
+            ProductHydrationClient client,
+            ProductProperties properties,
+            Clock clock,
+            CartDependencyMetrics metrics) {
         this.client = java.util.Objects.requireNonNull(client);
         this.clock = java.util.Objects.requireNonNull(clock);
         this.ttl = java.util.Objects.requireNonNull(properties.cacheTtl());
         this.timeout = java.util.Objects.requireNonNull(properties.timeout());
+        this.metrics = metrics;
 
         if (ttl.isZero() || ttl.isNegative()) {
             throw new IllegalArgumentException("Product cache TTL must be positive");
@@ -45,31 +61,52 @@ public class CachedProductHydrationService {
         this.permits = new Semaphore(properties.maxConcurrency(), true);
     }
 
+
     public ProductHydrationResult getProduct(String productId) {
+        ProductHydrationResult result = loadProduct(productId);
+
+        if (metrics != null
+                && result.state() == ProductHydrationResult.State.STALE) {
+            metrics.recordStaleFallback();
+        }
+
+        return result;
+    }
+
+    private ProductHydrationResult loadProduct(String productId) {
         if (productId == null || productId.isBlank()) {
             return ProductHydrationResult.stale();
         }
 
         CacheEntry current = cache.get(productId);
-        if (isValid(current)) return current.result();
+        if (isValid(current)) {
+            recordCache(CacheLookup.HIT);
+            return current.result();
+        }
 
         CompletableFuture<ProductHydrationResult> promise = new CompletableFuture<>();
         CompletableFuture<ProductHydrationResult> running =
                 inFlight.putIfAbsent(productId, promise);
 
-        if (running != null) return await(running);
+        if (running != null) {
+            recordCache(CacheLookup.SHARED);
+            return await(running);
+        }
 
         try {
             CacheEntry refreshed = cache.get(productId);
             if (isValid(refreshed)) {
+                recordCache(CacheLookup.HIT);
                 promise.complete(refreshed.result());
                 return refreshed.result();
             }
 
+            recordCache(CacheLookup.MISS);
             ProductHydrationResult result = fetchWithLimit(productId);
 
             if (cacheable(result)) {
-                cache.put(productId, new CacheEntry(result, clock.instant().plus(ttl)));
+                cache.put(productId,
+                        new CacheEntry(result, clock.instant().plus(ttl)));
                 evictIfNecessary();
             } else {
                 cache.remove(productId);
@@ -78,9 +115,15 @@ public class CachedProductHydrationService {
             promise.complete(result);
             return result;
         } finally {
-            if (!promise.isDone()) promise.complete(ProductHydrationResult.stale());
+            if (!promise.isDone()) {
+                promise.complete(ProductHydrationResult.stale());
+            }
             inFlight.remove(productId, promise);
         }
+    }
+
+    private void recordCache(CacheLookup result) {
+        if (metrics != null) metrics.recordCacheLookup(result);
     }
 
     private ProductHydrationResult fetchWithLimit(String productId) {

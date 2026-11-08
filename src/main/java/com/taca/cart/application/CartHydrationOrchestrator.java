@@ -8,6 +8,8 @@ import com.taca.cart.config.ProductProperties;
 import com.taca.cart.domain.Cart;
 import com.taca.cart.domain.CartItem;
 import com.taca.cart.integrations.InventoryAvailabilityClient;
+import com.taca.cart.observability.CartDependencyMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -26,6 +28,8 @@ public class CartHydrationOrchestrator {
     private final long inventoryTimeoutNanos;
     private final int productConcurrency;
     private final int inventoryBatchSize;
+    private final CartDependencyMetrics metrics;
+
 
     public CartHydrationOrchestrator(
             CachedProductHydrationService productService,
@@ -35,10 +39,26 @@ public class CartHydrationOrchestrator {
             CartProperties cartProperties,
             ProductProperties productProperties,
             InventoryProperties inventoryProperties) {
+        this(productService, productHydrator, inventoryClient, inventoryHydrator,
+                cartProperties, productProperties, inventoryProperties, null);
+    }
+
+    @Autowired
+    public CartHydrationOrchestrator(
+            CachedProductHydrationService productService,
+            CartProductResponseHydrator productHydrator,
+            InventoryAvailabilityClient inventoryClient,
+            CartInventoryResponseHydrator inventoryHydrator,
+            CartProperties cartProperties,
+            ProductProperties productProperties,
+            InventoryProperties inventoryProperties,
+            CartDependencyMetrics metrics) {
         this.productService = Objects.requireNonNull(productService);
         this.productHydrator = Objects.requireNonNull(productHydrator);
         this.inventoryClient = Objects.requireNonNull(inventoryClient);
         this.inventoryHydrator = Objects.requireNonNull(inventoryHydrator);
+        this.metrics = metrics;
+
         this.budgetNanos = positiveNanos(cartProperties.hydrateTimeout());
         this.productTimeoutNanos = positiveNanos(productProperties.timeout());
         this.inventoryTimeoutNanos = positiveNanos(inventoryProperties.timeout());
@@ -47,9 +67,11 @@ public class CartHydrationOrchestrator {
 
         if (productConcurrency < 1 || inventoryBatchSize < 1
                 || inventoryBatchSize > 100) {
-            throw new IllegalArgumentException("Invalid hydration concurrency or batch size");
+            throw new IllegalArgumentException(
+                    "Invalid hydration concurrency or batch size");
         }
     }
+
 
     public CartResponse hydrate(Optional<Cart> snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
@@ -75,10 +97,17 @@ public class CartHydrationOrchestrator {
                 .map(item -> item.skuId())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
+
         Map<String, InventoryStock> inventory =
                 fetchInventory(validSkuIds, started);
 
-        return inventoryHydrator.hydrate(productResponse, products, inventory);
+        CartResponse response = inventoryHydrator.hydrate(productResponse, products, inventory);
+
+        if (metrics != null) {
+            metrics.recordHydrationItems(response);
+        }
+
+        return response;
     }
 
     private Map<String, ProductHydrationResult> fetchProducts(
