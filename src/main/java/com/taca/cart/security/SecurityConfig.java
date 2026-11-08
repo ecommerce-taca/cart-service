@@ -20,7 +20,9 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             @Value("${CART_GATEWAY_TOKEN:}") String gatewayToken,
-            @Value("${CART_INTERNAL_TOKEN:}") String internalToken) throws Exception {
+            @Value("${CART_INTERNAL_TOKEN:}") String internalToken,
+            @Value("${CART_MONITORING_TOKEN:}") String monitoringToken)
+            throws Exception {
 
         http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -41,14 +43,25 @@ public class SecurityConfig {
                 .addFilterBefore(
                         new InternalServiceAuthenticationFilter(internalToken),
                         UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(
+                        new MonitoringAuthenticationFilter(monitoringToken),
+                        UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/health/live", "/health/ready").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/cart").hasAuthority(CartAuthorities.BUYER)
-                        .requestMatchers(HttpMethod.POST, "/api/v1/cart/items").hasAuthority(CartAuthorities.BUYER)
-                        .requestMatchers(HttpMethod.PUT, "/api/v1/cart/items/{itemId}").hasAuthority(CartAuthorities.BUYER)
-                        .requestMatchers(HttpMethod.DELETE, "/api/v1/cart/items/{itemId}").hasAuthority(CartAuthorities.BUYER)
-                        .requestMatchers(HttpMethod.GET, "/api/v1/internal/carts/{buyerUserId}").hasAuthority(CartAuthorities.INTERNAL)
-                        .requestMatchers(HttpMethod.POST, "/api/v1/internal/carts/{buyerUserId}/checked-out").hasAuthority(CartAuthorities.INTERNAL)
+                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus")
+                        .hasAuthority(MonitoringAuthenticationFilter.AUTHORITY)
+                        .requestMatchers(HttpMethod.GET, "/api/v1/cart")
+                        .hasAuthority(CartAuthorities.BUYER)
+                        .requestMatchers(HttpMethod.POST, "/api/v1/cart/items")
+                        .hasAuthority(CartAuthorities.BUYER)
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/cart/items/{itemId}")
+                        .hasAuthority(CartAuthorities.BUYER)
+                        .requestMatchers(HttpMethod.DELETE, "/api/v1/cart/items/{itemId}")
+                        .hasAuthority(CartAuthorities.BUYER)
+                        .requestMatchers(HttpMethod.GET, "/api/v1/internal/carts/{buyerUserId}")
+                        .hasAuthority(CartAuthorities.INTERNAL)
+                        .requestMatchers(HttpMethod.POST, "/api/v1/internal/carts/{buyerUserId}/checked-out")
+                        .hasAuthority(CartAuthorities.INTERNAL)
                         .anyRequest().denyAll()
                 );
 

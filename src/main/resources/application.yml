@@ -65,3 +65,14 @@ management:
           - w3c
         consume:
           - w3c
+  endpoint:
+    prometheus:
+      access: read-only
+  endpoints:
+    web:
+      exposure:
+        include: prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true
