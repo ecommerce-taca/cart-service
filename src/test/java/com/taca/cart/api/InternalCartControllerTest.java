@@ -4,6 +4,7 @@ import com.taca.cart.api.dto.InternalCartItemResponse;
 import com.taca.cart.api.dto.InternalCartResponse;
 import com.taca.cart.api.error.CartErrorCode;
 import com.taca.cart.api.error.CartException;
+import com.taca.cart.application.InternalCartCleanupService;
 import com.taca.cart.application.InternalCartQueryService;
 import com.taca.cart.security.SecurityConfig;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,9 @@ class InternalCartControllerTest {
 
     @MockitoBean
     private InternalCartQueryService queryService;
+
+    @MockitoBean
+    private InternalCartCleanupService cleanupService;
 
     @DynamicPropertySource
     static void configureTokens(DynamicPropertyRegistry registry) {
@@ -67,6 +71,7 @@ class InternalCartControllerTest {
 
         verify(queryService).getCart("buyer-001", "item-001,item-404");
         verifyNoMoreInteractions(queryService);
+        verifyNoInteractions(cleanupService);
     }
 
     @Test
@@ -78,8 +83,8 @@ class InternalCartControllerTest {
         mvc.perform(get(PATH)
                         .header("X-Internal-Service-Token", INTERNAL_TOKEN))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.cart_id").value(
-                        org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.cart_id")
+                        .value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.items").isEmpty())
                 .andExpect(jsonPath("$.data.missing_item_ids").isEmpty());
 
@@ -93,7 +98,7 @@ class InternalCartControllerTest {
                 .andExpect(jsonPath("$.error.code")
                         .value("CART_UNAUTHENTICATED"));
 
-        verifyNoInteractions(queryService);
+        verifyNoInteractions(queryService, cleanupService);
     }
 
     @Test
@@ -102,7 +107,7 @@ class InternalCartControllerTest {
                         .header("X-Internal-Service-Token", "f".repeat(64)))
                 .andExpect(status().isUnauthorized());
 
-        verifyNoInteractions(queryService);
+        verifyNoInteractions(queryService, cleanupService);
     }
 
     @Test
@@ -113,7 +118,7 @@ class InternalCartControllerTest {
                         .header("X-User-ID", "buyer-001"))
                 .andExpect(status().isUnauthorized());
 
-        verifyNoInteractions(queryService);
+        verifyNoInteractions(queryService, cleanupService);
     }
 
     @Test
