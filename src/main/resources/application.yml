@@ -46,3 +46,9 @@ logging:
         service: cart-service
         env: ${APP_ENV:local}
         version: ${APP_VERSION:dev}
+        
+management:
+  metrics:
+    distribution:
+      slo:
+        http.server.requests: 100ms,250ms,500ms,1s,3s
