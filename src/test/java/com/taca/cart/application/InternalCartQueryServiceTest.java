@@ -147,6 +147,18 @@ class InternalCartQueryServiceTest {
         verifyNoMoreInteractions(persistence);
     }
 
+    @Test
+    void shouldRejectMalformedBuyerIdWithoutReadingDatabase() {
+        for (String buyerId : List.of("bad buyer", "../admin", "buyer/001")) {
+            CartException ex = assertThrows(CartException.class,
+                    () -> service.getCart(buyerId, null));
+
+            assertEquals(CartErrorCode.CART_INVALID_INPUT, ex.getCode());
+        }
+
+        verifyNoInteractions(persistence);
+    }
+
     private Cart sampleCart() {
         CartItem first = new CartItem(
                 "item-001", "product-001", "sku-001", "shop-001",

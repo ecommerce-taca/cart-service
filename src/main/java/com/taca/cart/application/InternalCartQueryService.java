@@ -28,6 +28,12 @@ public class InternalCartQueryService {
     }
 
     public InternalCartResponse getCart(String buyerUserId, String rawItemIds) {
+        if (buyerUserId == null
+                || !buyerUserId.matches("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")) {
+            throw new CartException(CartErrorCode.CART_INVALID_INPUT,
+                    "Invalid buyerUserId");
+        }
+
         List<String> requestedIds = parseItemIds(rawItemIds);
         Optional<Cart> snapshot;
 
