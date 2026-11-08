@@ -36,3 +36,43 @@ inventory:
   timeout: ${INVENTORY_TIMEOUT:1s}
   max-batch-size: ${INVENTORY_MAX_BATCH_SIZE:100}
   max-concurrency: ${INVENTORY_MAX_CONCURRENCY:10}
+
+logging:
+  structured:
+    format:
+      console: logstash
+    json:
+      add:
+        service: cart-service
+        env: ${APP_ENV:local}
+        version: ${APP_VERSION:dev}
+
+management:
+  metrics:
+    distribution:
+      slo:
+        http.server.requests: 100ms,250ms,500ms,1s
+  opentelemetry:
+    enabled: true
+    tracing:
+      sampling:
+        probability: ${TRACING_SAMPLE_PROBABILITY:0.1}
+      export:
+        otlp:
+          enabled: ${TRACING_OTLP_ENABLED:false}
+      propagation:
+        produce:
+          - w3c
+        consume:
+          - w3c
+  endpoint:
+    prometheus:
+      access: read-only
+  endpoints:
+    web:
+      exposure:
+        include: prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true

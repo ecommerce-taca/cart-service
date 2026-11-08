@@ -3,6 +3,10 @@ package com.taca.cart.integrations;
 import com.taca.cart.application.ProductHydrationResult;
 import com.taca.cart.application.ValidatedSkuSnapshot;
 import com.taca.cart.config.ProductProperties;
+import com.taca.cart.observability.CartDependencyMetrics;
+import com.taca.cart.observability.CartDependencyMetrics.ProductHttpOutcome;
+import com.taca.cart.observability.OutboundHttpTracing;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -14,6 +18,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Comparator;
@@ -30,10 +35,28 @@ public class HttpProductHydrationClient implements ProductHydrationClient {
     private final JsonMapper jsonMapper;
     private final URI baseUri;
     private final Duration timeout;
+    private final CartDependencyMetrics metrics;
+    private final OutboundHttpTracing tracing;
 
     public HttpProductHydrationClient(
             ProductProperties properties,
-            @Value("${product.base-url:}") String baseUrl) {
+            String baseUrl) {
+        this(properties, baseUrl, null, null);
+    }
+
+    public HttpProductHydrationClient(
+            ProductProperties properties,
+            String baseUrl,
+            CartDependencyMetrics metrics) {
+        this(properties, baseUrl, metrics, null);
+    }
+
+    @Autowired
+    public HttpProductHydrationClient(
+            ProductProperties properties,
+            @Value("${product.base-url:}") String baseUrl,
+            CartDependencyMetrics metrics,
+            OutboundHttpTracing tracing) {
         this.timeout = properties.timeout();
         if (timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("Product timeout must be positive");
@@ -45,7 +68,10 @@ public class HttpProductHydrationClient implements ProductHydrationClient {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         this.jsonMapper = JsonMapper.builder().build();
+        this.metrics = metrics;
+        this.tracing = tracing;
     }
+
 
     @Override
     public ProductHydrationResult fetchProduct(String productId) {
@@ -53,31 +79,55 @@ public class HttpProductHydrationClient implements ProductHydrationClient {
             return ProductHydrationResult.stale();
         }
 
-        HttpRequest request = HttpRequest.newBuilder(
+        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(
                         baseUri.resolve(PRODUCT_PATH + productId))
                 .timeout(timeout)
                 .header("Accept", "application/json")
-                .GET()
-                .build();
+                .GET();
+
+        long startedAt = System.nanoTime();
+        ProductHttpOutcome outcome = ProductHttpOutcome.IO_ERROR;
 
         try {
-            HttpResponse<String> response = httpClient.send(
-                    request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<String> response = tracing == null
+                    ? httpClient.send(requestBuilder.build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                    : tracing.send(httpClient, requestBuilder,
+                    "product.catalog.get", "/api/v1/products/{productId}");
 
             if (response.statusCode() == 404) {
+                outcome = ProductHttpOutcome.NOT_FOUND;
                 return ProductHydrationResult.unavailable();
             }
 
             if (response.statusCode() != 200) {
+                outcome = ProductHttpOutcome.HTTP_ERROR;
                 return ProductHydrationResult.stale();
             }
 
-            return parseProduct(response.body(), productId);
+            ProductHydrationResult result = parseProduct(response.body(), productId);
+
+            outcome = switch (result.state()) {
+                case FOUND -> ProductHttpOutcome.FOUND;
+                case UNAVAILABLE -> ProductHttpOutcome.UNAVAILABLE;
+                case STALE -> ProductHttpOutcome.INVALID_RESPONSE;
+            };
+
+            return result;
+        } catch (HttpTimeoutException ex) {
+            outcome = ProductHttpOutcome.TIMEOUT;
+            return ProductHydrationResult.stale();
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
+            outcome = ProductHttpOutcome.INTERRUPTED;
             return ProductHydrationResult.stale();
         } catch (IOException ex) {
+            outcome = ProductHttpOutcome.IO_ERROR;
             return ProductHydrationResult.stale();
+        } finally {
+            if (metrics != null) {
+                metrics.recordProductHttp(outcome, System.nanoTime() - startedAt);
+            }
         }
     }
 

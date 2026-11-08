@@ -2,6 +2,11 @@ package com.taca.cart.integrations;
 
 import com.taca.cart.application.InventoryStock;
 import com.taca.cart.config.InventoryProperties;
+import com.taca.cart.observability.CartDependencyMetrics;
+import com.taca.cart.observability.CartDependencyMetrics.InventoryHttpOutcome;
+import com.taca.cart.observability.CartDependencyMetrics.InventorySkipReason;
+import com.taca.cart.observability.OutboundHttpTracing;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -14,6 +19,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
@@ -31,11 +37,31 @@ public class HttpInventoryAvailabilityClient implements InventoryAvailabilityCli
     private final String internalToken;
     private final InventoryProperties properties;
     private final Semaphore permits;
+    private final CartDependencyMetrics metrics;
+    private final OutboundHttpTracing tracing;
 
     public HttpInventoryAvailabilityClient(
             InventoryProperties properties,
+            String baseUrl,
+            String internalToken) {
+        this(properties, baseUrl, internalToken, null, null);
+    }
+
+    public HttpInventoryAvailabilityClient(
+            InventoryProperties properties,
+            String baseUrl,
+            String internalToken,
+            CartDependencyMetrics metrics) {
+        this(properties, baseUrl, internalToken, metrics, null);
+    }
+
+    @Autowired
+    public HttpInventoryAvailabilityClient(
+            InventoryProperties properties,
             @Value("${inventory.base-url:}") String baseUrl,
-            @Value("${inventory.internal-token:}") String internalToken) {
+            @Value("${inventory.internal-token:}") String internalToken,
+            CartDependencyMetrics metrics,
+            OutboundHttpTracing tracing) {
         this.properties = properties;
         this.baseUri = parseBaseUri(baseUrl);
         this.internalToken = internalToken;
@@ -45,19 +71,36 @@ public class HttpInventoryAvailabilityClient implements InventoryAvailabilityCli
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         this.jsonMapper = JsonMapper.builder().build();
+        this.metrics = metrics;
+        this.tracing = tracing;
     }
+
 
     @Override
     public Map<String, InventoryStock> fetchAvailability(Set<String> skuIds) {
-        if (skuIds == null || skuIds.isEmpty()) return Map.of();
+        if (skuIds == null || skuIds.isEmpty()) {
+            recordSkipped(InventorySkipReason.EMPTY);
+            return Map.of();
+        }
+
         if (skuIds.size() > properties.maxBatchSize()
                 || skuIds.stream().anyMatch(id -> !validId(id))) {
+            recordSkipped(InventorySkipReason.INVALID);
             return Map.of();
         }
+
         if (baseUri == null || internalToken == null || internalToken.isBlank()) {
+            recordSkipped(InventorySkipReason.NOT_CONFIGURED);
             return Map.of();
         }
-        if (!permits.tryAcquire()) return Map.of();
+
+        if (!permits.tryAcquire()) {
+            recordSkipped(InventorySkipReason.BUSY);
+            return Map.of();
+        }
+
+        long startedAt = System.nanoTime();
+        InventoryHttpOutcome outcome = InventoryHttpOutcome.CLIENT_ERROR;
 
         try {
             List<String> ordered = skuIds.stream().sorted().toList();
@@ -65,26 +108,58 @@ public class HttpInventoryAvailabilityClient implements InventoryAvailabilityCli
                     String.join(",", ordered), StandardCharsets.UTF_8);
             URI uri = baseUri.resolve(PATH + "?sku_ids=" + query);
 
-            HttpRequest request = HttpRequest.newBuilder(uri)
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(uri)
                     .timeout(properties.timeout())
                     .header("Accept", "application/json")
                     .header("X-Internal-Service-Token", internalToken)
-                    .GET()
-                    .build();
+                    .GET();
 
-            HttpResponse<String> response = httpClient.send(
-                    request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<String> response = tracing == null
+                    ? httpClient.send(requestBuilder.build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                    : tracing.send(httpClient, requestBuilder,
+                    "inventory.availability.get", "/internal/inventory/availability");
 
-            if (response.statusCode() != 200) return Map.of();
-            return parseResponse(response.body(), skuIds);
+            if (response.statusCode() != 200) {
+                outcome = InventoryHttpOutcome.HTTP_ERROR;
+                return Map.of();
+            }
+
+            Map<String, InventoryStock> result =
+                    parseResponse(response.body(), skuIds);
+
+            if (result.isEmpty()) {
+                outcome = InventoryHttpOutcome.EMPTY;
+            } else if (result.size() < skuIds.size()) {
+                outcome = InventoryHttpOutcome.PARTIAL;
+            } else {
+                outcome = InventoryHttpOutcome.COMPLETE;
+            }
+
+            return result;
+        } catch (HttpTimeoutException ex) {
+            outcome = InventoryHttpOutcome.TIMEOUT;
+            return Map.of();
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
+            outcome = InventoryHttpOutcome.INTERRUPTED;
             return Map.of();
-        } catch (IOException | RuntimeException ex) {
+        } catch (IOException ex) {
+            outcome = InventoryHttpOutcome.IO_ERROR;
+            return Map.of();
+        } catch (RuntimeException ex) {
+            outcome = InventoryHttpOutcome.CLIENT_ERROR;
             return Map.of();
         } finally {
             permits.release();
+            if (metrics != null) {
+                metrics.recordInventoryHttp(outcome, System.nanoTime() - startedAt);
+            }
         }
+    }
+
+    private void recordSkipped(InventorySkipReason reason) {
+        if (metrics != null) metrics.recordInventorySkipped(reason);
     }
 
     private Map<String, InventoryStock> parseResponse(String body, Set<String> requested) {
