@@ -5,6 +5,7 @@ import com.taca.cart.config.InventoryProperties;
 import com.taca.cart.observability.CartDependencyMetrics;
 import com.taca.cart.observability.CartDependencyMetrics.InventoryHttpOutcome;
 import com.taca.cart.observability.CartDependencyMetrics.InventorySkipReason;
+import com.taca.cart.observability.OutboundHttpTracing;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -37,13 +38,21 @@ public class HttpInventoryAvailabilityClient implements InventoryAvailabilityCli
     private final InventoryProperties properties;
     private final Semaphore permits;
     private final CartDependencyMetrics metrics;
-
+    private final OutboundHttpTracing tracing;
 
     public HttpInventoryAvailabilityClient(
             InventoryProperties properties,
             String baseUrl,
             String internalToken) {
-        this(properties, baseUrl, internalToken, null);
+        this(properties, baseUrl, internalToken, null, null);
+    }
+
+    public HttpInventoryAvailabilityClient(
+            InventoryProperties properties,
+            String baseUrl,
+            String internalToken,
+            CartDependencyMetrics metrics) {
+        this(properties, baseUrl, internalToken, metrics, null);
     }
 
     @Autowired
@@ -51,7 +60,8 @@ public class HttpInventoryAvailabilityClient implements InventoryAvailabilityCli
             InventoryProperties properties,
             @Value("${inventory.base-url:}") String baseUrl,
             @Value("${inventory.internal-token:}") String internalToken,
-            CartDependencyMetrics metrics) {
+            CartDependencyMetrics metrics,
+            OutboundHttpTracing tracing) {
         this.properties = properties;
         this.baseUri = parseBaseUri(baseUrl);
         this.internalToken = internalToken;
@@ -62,6 +72,7 @@ public class HttpInventoryAvailabilityClient implements InventoryAvailabilityCli
                 .build();
         this.jsonMapper = JsonMapper.builder().build();
         this.metrics = metrics;
+        this.tracing = tracing;
     }
 
 
@@ -97,15 +108,17 @@ public class HttpInventoryAvailabilityClient implements InventoryAvailabilityCli
                     String.join(",", ordered), StandardCharsets.UTF_8);
             URI uri = baseUri.resolve(PATH + "?sku_ids=" + query);
 
-            HttpRequest request = HttpRequest.newBuilder(uri)
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(uri)
                     .timeout(properties.timeout())
                     .header("Accept", "application/json")
                     .header("X-Internal-Service-Token", internalToken)
-                    .GET()
-                    .build();
+                    .GET();
 
-            HttpResponse<String> response = httpClient.send(
-                    request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<String> response = tracing == null
+                    ? httpClient.send(requestBuilder.build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                    : tracing.send(httpClient, requestBuilder,
+                    "inventory.availability.get", "/internal/inventory/availability");
 
             if (response.statusCode() != 200) {
                 outcome = InventoryHttpOutcome.HTTP_ERROR;
