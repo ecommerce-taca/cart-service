@@ -36,3 +36,13 @@ inventory:
   timeout: ${INVENTORY_TIMEOUT:1s}
   max-batch-size: ${INVENTORY_MAX_BATCH_SIZE:100}
   max-concurrency: ${INVENTORY_MAX_CONCURRENCY:10}
+
+logging:
+  structured:
+    format:
+      console: logstash
+    json:
+      add:
+        service: cart-service
+        env: ${APP_ENV:local}
+        version: ${APP_VERSION:dev}
