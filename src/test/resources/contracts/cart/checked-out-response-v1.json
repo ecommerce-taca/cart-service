@@ -1,0 +1,12 @@
+{
+  "data": {
+    "cart_id": "cart-001",
+    "removed_item_ids": ["item-001"],
+    "missing_item_ids": ["item-missing"],
+    "skipped_modified_item_ids": ["item-modified"],
+    "remaining_item_count": 1
+  },
+  "meta": {
+    "request_id": "req-001"
+  }
+}

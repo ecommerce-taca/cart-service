@@ -1,0 +1,8 @@
+{
+  "cart_id": "cart-001",
+  "checkout_group_id": "group-001",
+  "item_ids": ["item-001"],
+  "expected_item_revisions": {
+    "item-001": 7
+  }
+}
