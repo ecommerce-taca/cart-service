@@ -1,0 +1,21 @@
+{
+  "data": {
+    "cart_id": "cart-001",
+    "buyer_user_id": "buyer-001",
+    "items": [
+      {
+        "item_id": "item-001",
+        "product_id": "product-001",
+        "sku_id": "sku-001",
+        "shop_id": "shop-001",
+        "quantity": 2,
+        "item_revision": 7,
+        "unit_price_snapshot": 120000
+      }
+    ],
+    "missing_item_ids": ["item-missing"]
+  },
+  "meta": {
+    "request_id": "req-001"
+  }
+}
