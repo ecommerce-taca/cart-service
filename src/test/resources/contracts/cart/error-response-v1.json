@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "CART_STORAGE_UNAVAILABLE",
+    "message": "Cart storage is unavailable",
+    "details": {},
+    "trace_id": "11223344556677889900aabbccddeeff"
+  }
+}

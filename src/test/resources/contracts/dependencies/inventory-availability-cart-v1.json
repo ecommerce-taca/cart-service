@@ -1,0 +1,14 @@
+
+{
+  "data": [
+    {
+      "sku_id": "sku-001",
+      "available_qty": 7,
+      "status": "ACTIVE",
+      "as_of": "2026-11-07T08:00:00Z"
+    }
+  ],
+  "meta": {
+    "request_id": "req-inventory-001"
+  }
+}
