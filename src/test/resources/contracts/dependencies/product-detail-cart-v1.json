@@ -1,0 +1,23 @@
+{
+  "data": {
+    "product_id": "product-001",
+    "status": "ACTIVE",
+    "title": "Coffee Beans",
+    "shop": {"shop_id": "shop-001"},
+    "skus": [
+      {
+        "sku_id": "sku-001",
+        "status": "ACTIVE",
+        "attributes": {"roast": "medium", "size": "250g"},
+        "price": {"sale_price": 249000, "currency": "VND"}
+      },
+      {
+        "sku_id": "sku-002",
+        "status": "ACTIVE",
+        "attributes": {"size": "500g"},
+        "price": {"sale_price": 399000, "currency": "VND"}
+      }
+    ]
+  },
+  "meta": {"request_id": "req-product-001"}
+}
